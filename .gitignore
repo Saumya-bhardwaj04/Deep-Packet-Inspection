@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+python_engine/output_python.pcap
+python_engine/.venv/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+node_modules/
+node_backend/node_modules/
+
+# Output artifacts
+*.pcapng
+*.pcap
+
+# Env files
+.env
+*.env
+!.env.example
+
+# Runtime backend artifacts
+node_backend/uploads/*
+node_backend/outputs/*
+!node_backend/uploads/.gitkeep
+!node_backend/outputs/.gitkeep

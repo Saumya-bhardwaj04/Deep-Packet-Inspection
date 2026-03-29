@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: packet-analyzer-api
+    env: node
+    rootDir: node_backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 8000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: PYTHON_BIN
+        value: python
+      - key: PYTHON_SCRIPT_PATH
+        value: ../python_engine/cli.py

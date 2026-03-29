@@ -1,0 +1,6 @@
+{
+  "blocked_ips": ["192.168.1.50"],
+  "blocked_apps": ["YouTube", "TikTok"],
+  "blocked_domains": ["*.facebook.com", "*.instagram.com"],
+  "blocked_ports": [22]
+}

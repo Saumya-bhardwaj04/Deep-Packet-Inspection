@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import StatCard from "./components/StatCard";
@@ -7,6 +7,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const TOKEN_KEY = "dpi_token";
 const ROLE_KEY = "dpi_role";
 const USERNAME_KEY = "dpi_username";
+const INTRO_SEEN_KEY = "dpi_intro_seen";
 
 const emptyRules = {
   blocked_ips: [],
@@ -69,8 +70,22 @@ async function parseJsonResponse(res, contextLabel) {
   );
 }
 
+function normalizeAuthApiError(rawMessage, mode) {
+  const message = String(rawMessage || "Authentication failed");
+  if (mode !== "register") {
+    return message;
+  }
+
+  if (/username\s+already\s+exists?/i.test(message) || /email\s+already\s+exists?/i.test(message)) {
+    return "Email already exists.";
+  }
+
+  return message;
+}
+
 export default function App() {
   const toastTimerRef = useRef(null);
+  const mobileMenuRef = useRef(null);
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
   const [authMode, setAuthMode] = useState("login");
   const [authForm, setAuthForm] = useState({ username: "", password: "" });
@@ -96,6 +111,7 @@ export default function App() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [requestAccessSent, setRequestAccessSent] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [streamConfig, setStreamConfig] = useState({
     interface: "Ethernet",
     output_path: "node_backend/outputs/live_stream.pcap",
@@ -178,6 +194,21 @@ export default function App() {
     return () => clearInterval(id);
   }, [token, isAdmin]);
 
+  useEffect(() => {
+    if (!showMobileMenu) {
+      return;
+    }
+
+    function onClickOutside(event) {
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target)) {
+        setShowMobileMenu(false);
+      }
+    }
+
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [showMobileMenu]);
+
   function authHeaders() {
     const headers = { "Content-Type": "application/json" };
     if (token) {
@@ -196,6 +227,22 @@ export default function App() {
       setDashboardToast("");
       toastTimerRef.current = null;
     }, durationMs);
+  }
+
+  function normalizeIdentity(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function filterPendingRequestsForView(pendingList, usersList = users) {
+    const rows = Array.isArray(pendingList) ? pendingList : [];
+    const sourceUsers = Array.isArray(usersList) ? usersList : [];
+    const adminUsers = new Set(
+      sourceUsers
+        .filter((user) => String(user?.role || "").toLowerCase() === "admin")
+        .map((user) => normalizeIdentity(user?.username))
+    );
+
+    return rows.filter((request) => !adminUsers.has(normalizeIdentity(request?.username)));
   }
 
   async function boot() {
@@ -234,7 +281,7 @@ export default function App() {
         }
         if (isAdmin && pendingRes && pendingRes.ok) {
           const pendingPayload = await parseJsonResponse(pendingRes, "Access Requests API");
-          setPendingRequests(Array.isArray(pendingPayload) ? pendingPayload : []);
+          setPendingRequests(filterPendingRequestsForView(pendingPayload));
         }
       }
     } catch (e) {
@@ -289,7 +336,6 @@ export default function App() {
     setAuthMode(nextMode);
     setAuthError({ text: "", mode: null });
     setAuthNotice({ text: "", mode: null });
-    setAuthForm({ username: "", password: "" });
     setRequestAccessSent(false);
   }
 
@@ -320,7 +366,7 @@ export default function App() {
 
       const body = await parseJsonResponse(res, authMode === "login" ? "Login API" : "Register API");
       if (!res.ok) {
-        throw new Error(body.error || "Authentication failed");
+        throw new Error(normalizeAuthApiError(body.error, authMode));
       }
 
       if (authMode === "register") {
@@ -712,7 +758,7 @@ export default function App() {
       }
 
       setUsers(usersPayload);
-      setPendingRequests(Array.isArray(pendingPayload) ? pendingPayload : []);
+      setPendingRequests(filterPendingRequestsForView(pendingPayload, usersPayload));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -731,7 +777,7 @@ export default function App() {
       if (!res.ok) {
         throw new Error(payload.error || "Failed to load access requests");
       }
-      setPendingRequests(Array.isArray(payload) ? payload : []);
+      setPendingRequests(filterPendingRequestsForView(payload));
     } catch (_e) {
       // Keep last known badge count if transient polling fails.
     }
@@ -752,6 +798,7 @@ export default function App() {
         throw new Error(payload.error || "Failed to promote user");
       }
       showDashboardToast(payload.message || `${username} promoted to admin`);
+      setPendingRequests((prev) => prev.filter((request) => normalizeIdentity(request?.username) !== normalizeIdentity(username)));
       await fetchUsers();
     } catch (e) {
       setError(e.message);
@@ -980,10 +1027,79 @@ export default function App() {
 
   return (
     <div className="page-shell">
+      {showMobileMenu && (
+        <button
+          type="button"
+          className="dashboard-menu-backdrop"
+          aria-label="Close dashboard menu"
+          onClick={() => setShowMobileMenu(false)}
+        />
+      )}
+
       <header className="hero dashboard-hero">
-        <div>
+        <div className="dashboard-hero-head">
+          <div>
           <h1>DPI Operations Dashboard</h1>
-          <p>Real-time job trigger dashboard with reporting, charts, and DPI test controls.</p>
+            <p className="dashboard-subtitle">Real-time job trigger dashboard with reporting, charts, and DPI test controls.</p>
+            <div className="dashboard-mobile-meta">
+              <span className={`status ${health}`}>Backend: {health}</span>
+              <span className={`role-badge ${isAdmin ? "admin" : "viewer"}`}>{isAdmin ? "Admin" : "Viewer"}</span>
+              {isAdmin && (
+                <span className={`pending-badge ${pendingRequests.length > 0 ? "attention" : ""}`}>
+                  Pending Requests: {pendingRequests.length}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="dashboard-mobile-menu-wrap" ref={mobileMenuRef}>
+            <button
+              type="button"
+              className="dashboard-mobile-menu-btn"
+              aria-label="Open dashboard menu"
+              aria-expanded={showMobileMenu}
+              onClick={() => setShowMobileMenu((prev) => !prev)}
+            >
+              <span className="dashboard-menu-icon" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </button>
+
+            {showMobileMenu && (
+              <div className="dashboard-mobile-menu">
+                <span className="user-tag">User: {currentUser || "session"}</span>
+                <div className="dashboard-mobile-menu-details">
+                  <div className="dashboard-mobile-menu-item">
+                    <span>Total Runs</span>
+                    <strong>{history.length}</strong>
+                  </div>
+                  <div className="dashboard-mobile-menu-item">
+                    <span>Latest Run</span>
+                    <strong>{history[0]?.timestamp ? new Date(history[0].timestamp).toLocaleDateString() : "No runs"}</strong>
+                  </div>
+                  <div className="dashboard-mobile-menu-item">
+                    <span>Current View</span>
+                    <strong>{tabs.find((tab) => tab.key === activeTab)?.label || "Overview"}</strong>
+                  </div>
+                  <div className="dashboard-mobile-menu-item">
+                    <span>Export Snapshot</span>
+                    <strong>{result ? "Available" : "Not ready"}</strong>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMobileMenu(false);
+                    logout();
+                  }}
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <div className="hero-actions">
           <span className={`status ${health}`}>Backend: {health}</span>
@@ -1154,8 +1270,9 @@ export default function App() {
             {!streamCapability.ok && (
               <div className="stream-warning">
                 <b>Live capture is not available on this server.</b>
-                <p>This server cannot read live network traffic right now.</p>
-                <p>Please use the DPI Testing tab with an uploaded .pcap file.</p>
+                <p>1. Install Npcap (Windows) with WinPcap compatibility mode.</p>
+                <p>2. If still unavailable, contact the server owner to enable live capture.</p>
+                <p>3. Use DPI Testing with an uploaded .pcap file as fallback.</p>
               </div>
             )}
 
@@ -1346,6 +1463,14 @@ export default function App() {
 }
 
 function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loading, authError, authNotice, submitAuth }) {
+  const INTRO_TRANSITION_MS = 720;
+  const WELCOME_ENTER_MS = 720;
+  const [showIntro, setShowIntro] = useState(() => localStorage.getItem(INTRO_SEEN_KEY) !== "1");
+  const [introTransitioning, setIntroTransitioning] = useState(false);
+  const [welcomeEntering, setWelcomeEntering] = useState(false);
+  const introTimerRef = useRef(null);
+  const welcomeTimerRef = useRef(null);
+  const visualPanelRef = useRef(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const passwordChecks = getPasswordChecks(authForm.password);
@@ -1361,9 +1486,74 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
       document.body.classList.remove("wp-lock-scroll");
     };
   }, [showAuthModal]);
+
+  useEffect(() => {
+    return () => {
+      if (introTimerRef.current) {
+        clearTimeout(introTimerRef.current);
+      }
+      if (welcomeTimerRef.current) {
+        clearTimeout(welcomeTimerRef.current);
+      }
+    };
+  }, []);
+
+  function startIntroTransition() {
+    if (introTransitioning) {
+      return;
+    }
+
+    setIntroTransitioning(true);
+    if (introTimerRef.current) {
+      clearTimeout(introTimerRef.current);
+    }
+
+    introTimerRef.current = setTimeout(() => {
+      localStorage.setItem(INTRO_SEEN_KEY, "1");
+      setShowIntro(false);
+      setWelcomeEntering(true);
+      setIntroTransitioning(false);
+
+      if (welcomeTimerRef.current) {
+        clearTimeout(welcomeTimerRef.current);
+      }
+      welcomeTimerRef.current = setTimeout(() => setWelcomeEntering(false), WELCOME_ENTER_MS);
+    }, INTRO_TRANSITION_MS);
+  }
+
+  function scrollToVisualPanel() {
+    if (!visualPanelRef.current) {
+      return;
+    }
+
+    const targetTop = visualPanelRef.current.offsetTop - 6;
+    window.scrollTo({ top: Math.max(targetTop, 0), behavior: "smooth" });
+  }
+
+  if (showIntro) {
+    return (
+      <section className={`wp-intro-page ${introTransitioning ? "wp-intro-exit" : ""}`} aria-label="Welcome intro">
+        <div className="wp-intro-vignette" aria-hidden="true" />
+        <div className="wp-intro-glow" aria-hidden="true" />
+
+        <div className="wp-intro-copy">
+          <h1>DPI Platform</h1>
+          <p>
+            Real-time packet analytics,
+            <br />
+            threat insight, and DPI control in one place.
+          </p>
+        </div>
+
+        <button className="wp-intro-cta" onClick={startIntroTransition} disabled={introTransitioning}>
+          Get started
+        </button>
+      </section>
+    );
+  }
  
   return (
-    <div className="welcome-page">
+    <div className={`welcome-page ${welcomeEntering ? "wp-welcome-enter" : ""}`}>
       <div className="wp-grid-bg" aria-hidden="true" />
  
       <div className="wp-nodes" aria-hidden="true">
@@ -1420,10 +1610,24 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
             <span className={`wp-status-dot ${health === "online" ? "dot-online" : "dot-offline"}`} />
             Backend: {health}
           </div>
+          <button
+            type="button"
+            className="wp-scroll-indicator"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              scrollToVisualPanel();
+            }}
+            aria-label="Scroll to analytics panel"
+          >
+            <span className="wp-scroll-mouse">
+              <span className="wp-scroll-wheel" />
+            </span>
+            <span className="wp-scroll-text">Scroll Down</span>
+          </button>
         </div>
  
         {/* RIGHT — visual panel */}
-        <div className="wp-visual" aria-hidden="true">
+        <div className="wp-visual" aria-hidden="true" ref={visualPanelRef}>
           <div className="wp-vis-card">
             <div className="wp-vis-header">
               <span className="wp-vis-dot red" />
@@ -1485,6 +1689,30 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
           </div>
         </div>
       </div>
+
+      <section className="wp-end-zone" aria-label="Platform highlights">
+        <div className="wp-end-zone-inner">
+          <div className="wp-end-kicker">Built for production traffic</div>
+          <h2 className="wp-end-title">Everything you need to inspect, decide, and act.</h2>
+
+          <div className="wp-end-cards">
+            <article className="wp-end-card">
+              <h3>Policy-ready workflows</h3>
+              <p>Create rule sets, test on captures, and push updates without leaving the control plane.</p>
+            </article>
+
+            <article className="wp-end-card">
+              <h3>Actionable visibility</h3>
+              <p>Track protocol distribution, suspicious spikes, and endpoint behavior from one timeline.</p>
+            </article>
+
+            <article className="wp-end-card">
+              <h3>Export and share</h3>
+              <p>Generate reports and hand off clear artifacts to security, network, and compliance teams.</p>
+            </article>
+          </div>
+        </div>
+      </section>
  
       {/* Auth Modal */}
       {showAuthModal && (

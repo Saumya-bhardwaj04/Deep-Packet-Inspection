@@ -531,7 +531,7 @@ router.get("/download/:filename", authMiddleware, requireAdmin, (req, res) => {
   return res.download(filePath, req.params.filename);
 });
 
-router.get("/sample-pcap", authMiddleware, requireAdmin, (req, res) => {
+router.get("/sample-pcap", authMiddleware, (req, res) => {
   const samplePath = path.resolve(ROOT_DIR, "test_dpi.pcap");
   if (!fs.existsSync(samplePath)) {
     return res.status(404).json({ error: "Sample file not found" });

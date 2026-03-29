@@ -138,6 +138,7 @@ def create_dns_query(domain):
 
 
 def main():
+    # Generate deterministic test mix for demo and validation runs.
     writer = PCAPWriter('test_dpi.pcap')
     
     # Source: User's machine
@@ -179,6 +180,7 @@ def main():
         'www.youtube.com',
         'www.facebook.com',
         'api.twitter.com',
+        'github.com',
     ]
     
     seq_base = 1000

@@ -263,6 +263,7 @@ export default function App() {
     setToken(nextToken);
     setCurrentUser(username || "");
     setCurrentRole(role || "viewer");
+    setRequestAccessSent(false);
   }
 
   function logout() {
@@ -280,6 +281,7 @@ export default function App() {
     setAuthError({ text: "", mode: null });
     setAuthNotice({ text: "", mode: null });
     setDashboardToast("");
+    setRequestAccessSent(false);
     setActiveTab("overview");
   }
 
@@ -288,6 +290,7 @@ export default function App() {
     setAuthError({ text: "", mode: null });
     setAuthNotice({ text: "", mode: null });
     setAuthForm({ username: "", password: "" });
+    setRequestAccessSent(false);
   }
 
   async function submitAuth() {

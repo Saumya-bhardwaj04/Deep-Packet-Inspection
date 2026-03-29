@@ -3,7 +3,7 @@ services:
     name: packet-analyzer-api
     env: node
     rootDir: node_backend
-    buildCommand: npm install
+    buildCommand: npm install && python3 -m pip install -r ../python_engine/requirements.txt
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
@@ -18,6 +18,10 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: PYTHON_BIN
-        value: python
+        value: python3
       - key: PYTHON_SCRIPT_PATH
         value: ../python_engine/cli.py
+      - key: PYTHON_STREAM_SCRIPT_PATH
+        value: ../python_engine/live_stream.py
+      - key: PYTHON_CAPTURE_CHECK_SCRIPT_PATH
+        value: ../python_engine/check_capture.py

@@ -495,6 +495,43 @@ export default function App() {
     }
   }
 
+  async function downloadSamplePcap() {
+    if (!token) {
+      setError("Login required");
+      return;
+    }
+    if (!isAdmin) {
+      setError("Only admins can download test files.");
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/dpi/sample-pcap`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const payload = await parseJsonResponse(res, "Sample PCAP API");
+        throw new Error(payload.error || "Failed to download sample file");
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "sample_test_dpi.pcap";
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      showDashboardToast("Sample .pcap downloaded.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function fetchStreamStatus() {
     if (!token) {
       return;
@@ -1032,7 +1069,7 @@ export default function App() {
         <section className="panel-grid">
           <section className="panel">
             <h2>Rules</h2>
-            <p className="hint">Define and save the blocking policy used by test runs.</p>
+            <p className="hint">Choose what to block (IP, app, website, or port), then save.</p>
 
             <div className="row-input">
               <input value={ruleForm.ip} placeholder="IP e.g. 192.168.1.50" onChange={(e) => setRuleForm((p) => ({ ...p, ip: e.target.value }))} />
@@ -1070,7 +1107,12 @@ export default function App() {
 
           <section className="panel">
             <h2>Run DPI Test</h2>
-            <p className="hint">Execute a processing run and generate output + report data.</p>
+            <p className="hint">Upload a .pcap file (saved network recording), run the test, and view what was allowed or blocked.</p>
+
+            <div className="sample-help">
+              <p>Need a file to try? Download our sample test file and upload it here.</p>
+              <button onClick={downloadSamplePcap} disabled={loading}>Download sample .pcap</button>
+            </div>
 
             <label>Upload PCAP file</label>
             <input
@@ -1111,10 +1153,9 @@ export default function App() {
 
             {!streamCapability.ok && (
               <div className="stream-warning">
-                <b>Live capture is unavailable on this host.</b>
-                <p>{streamCapability.reason || "Missing packet capture dependency."}</p>
-                <p>{streamCapability.suggestion || "Install the required capture provider and restart backend."}</p>
-                <p>Fallback: use the DPI Testing tab for file-based packet processing.</p>
+                <b>Live capture is not available on this server.</b>
+                <p>This server cannot read live network traffic right now.</p>
+                <p>Please use the DPI Testing tab with an uploaded .pcap file.</p>
               </div>
             )}
 

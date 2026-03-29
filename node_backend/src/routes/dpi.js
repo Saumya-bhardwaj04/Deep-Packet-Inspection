@@ -531,6 +531,14 @@ router.get("/download/:filename", authMiddleware, requireAdmin, (req, res) => {
   return res.download(filePath, req.params.filename);
 });
 
+router.get("/sample-pcap", authMiddleware, requireAdmin, (req, res) => {
+  const samplePath = path.resolve(ROOT_DIR, "test_dpi.pcap");
+  if (!fs.existsSync(samplePath)) {
+    return res.status(404).json({ error: "Sample file not found" });
+  }
+  return res.download(samplePath, "sample_test_dpi.pcap");
+});
+
 router.get("/report/pdf/:runId", authMiddleware, async (req, res) => {
   try {
     const run = await getRunById(req.params.runId);

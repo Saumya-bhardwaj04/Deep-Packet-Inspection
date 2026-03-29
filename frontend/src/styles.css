@@ -15,6 +15,30 @@
   box-sizing: border-box;
 }
 
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #7b9fc5 #dbe6f2;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #dbe6f2;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #9bb8d8, #6f93bb);
+  border-radius: 999px;
+  border: 2px solid #dbe6f2;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #85abd2, #5e86b2);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -919,6 +943,20 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
 .analysis-table { min-width: 760px; }
 .viewer-lock-panel { border-style: dashed; border-color: #d3deec; background: #f9fbff; }
 .viewer-lock-panel p { margin: 6px 0; }
+
+.sample-help {
+  border: 1px dashed #c8d8ea;
+  background: #f8fbff;
+  border-radius: 10px;
+  padding: 10px;
+  margin: 10px 0 12px;
+}
+
+.sample-help p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
 .request-admin-btn { margin-top: 10px; background: #0f2f4c; border-color: #0f2f4c; color: #fff; font-weight: 700; }
 .request-sent { margin-top: 10px; color: #1f7a48; font-weight: 600; }

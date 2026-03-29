@@ -3,12 +3,14 @@ services:
     name: packet-analyzer-api
     env: node
     rootDir: node_backend
-    buildCommand: npm install && python3 -m pip install -r ../python_engine/requirements.txt
+    buildCommand: npm install && python3 -m pip install -r ../python_engine/requirements-render.txt
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: 20
+      - key: PYTHON_VERSION
+        value: 3.12.7
       - key: PORT
         value: 8000
       - key: JWT_SECRET

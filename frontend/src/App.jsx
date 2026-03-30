@@ -9,6 +9,35 @@ const ROLE_KEY = "dpi_role";
 const USERNAME_KEY = "dpi_username";
 const INTRO_SEEN_KEY = "dpi_intro_seen";
 const PRIMARY_ADMIN_USERNAME = (import.meta.env.VITE_PRIMARY_ADMIN_USERNAME || "samisharma000@gmail.com").trim().toLowerCase();
+const DPI_OUTPUT_PATH = "node_backend/outputs/output_python.pcap";
+const LIVE_STREAM_OUTPUT_PATH = "node_backend/outputs/live_stream.pcap";
+const STREAM_INTERFACE_PRESETS = ["Wi-Fi", "Ethernet"];
+const ANALYSIS_HISTORY_PER_PAGE = 5;
+const defaultStreamStatus = {
+  running: false,
+  started_at: null,
+  stopped_at: null,
+  interface: null,
+  output_file: null,
+  last_error: null,
+  stats: {
+    total_packets: 0,
+    forwarded_packets: 0,
+    dropped_packets: 0,
+    drop_rate: 0,
+    tcp_packets: 0,
+    udp_packets: 0,
+    app_counts: {},
+    block_reasons: {},
+  },
+  ticks: [],
+};
+const defaultStreamCapability = {
+  ok: true,
+  interfaces: [],
+  reason: null,
+  suggestion: null,
+};
 
 const emptyRules = {
   blocked_ips: [],
@@ -26,6 +55,30 @@ function safeFileLabel(value) {
   }
   const parts = text.split(/[\\/]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : text;
+}
+
+function normalizeInterfaceLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const lower = text.toLowerCase();
+  if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("wireless") || lower.includes("wlan")) {
+    return "Wi-Fi";
+  }
+  if (lower.includes("ethernet") || lower.includes("eth")) {
+    return "Ethernet";
+  }
+  if (lower.includes("loopback")) {
+    return "Loopback";
+  }
+
+  if (text.includes("\\Device\\NPF_")) {
+    return "";
+  }
+
+  return text;
 }
 
 function isStrongPassword(value) {
@@ -97,7 +150,7 @@ export default function App() {
   const [apps, setApps] = useState([]);
   const [rules, setRules] = useState(emptyRules);
   const [ruleForm, setRuleForm] = useState({ ip: "", domain: "", port: "", app: "YouTube" });
-  const [job, setJob] = useState({ input_file: "", output_file: "output_python.pcap" });
+  const [job, setJob] = useState({ input_file: "", output_file: DPI_OUTPUT_PATH });
   const [hasUploadedTestFile, setHasUploadedTestFile] = useState(false);
 
   const [result, setResult] = useState(null);
@@ -117,34 +170,14 @@ export default function App() {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [streamConfig, setStreamConfig] = useState({
     interface: "Wi-Fi",
-    output_path: "live_stream.pcap",
+    output_path: LIVE_STREAM_OUTPUT_PATH,
     interval_seconds: 2,
   });
-  const [streamStatus, setStreamStatus] = useState({
-    running: false,
-    started_at: null,
-    stopped_at: null,
-    interface: null,
-    output_file: null,
-    last_error: null,
-    stats: {
-      total_packets: 0,
-      forwarded_packets: 0,
-      dropped_packets: 0,
-      drop_rate: 0,
-      tcp_packets: 0,
-      udp_packets: 0,
-      app_counts: {},
-      block_reasons: {},
-    },
-    ticks: [],
-  });
-  const [streamCapability, setStreamCapability] = useState({
-    ok: true,
-    interfaces: [],
-    reason: null,
-    suggestion: null,
-  });
+  const [streamInterfaceChoice, setStreamInterfaceChoice] = useState("Wi-Fi");
+  const [streamCapabilityNotice, setStreamCapabilityNotice] = useState("");
+  const [reportCategory, setReportCategory] = useState("dpi");
+  const [streamStatus, setStreamStatus] = useState(defaultStreamStatus);
+  const [streamCapability, setStreamCapability] = useState(defaultStreamCapability);
 
   const isAdmin = currentRole === "admin";
   const isViewer = currentRole === "viewer";
@@ -221,6 +254,14 @@ export default function App() {
     return () => clearTimeout(id);
   }, [error]);
 
+  useEffect(() => {
+    if (!streamCapabilityNotice) {
+      return;
+    }
+    const id = setTimeout(() => setStreamCapabilityNotice(""), 5000);
+    return () => clearTimeout(id);
+  }, [streamCapabilityNotice]);
+
   function authHeaders() {
     const headers = { "Content-Type": "application/json" };
     if (token) {
@@ -243,6 +284,13 @@ export default function App() {
 
   function normalizeIdentity(value) {
     return String(value || "").trim().toLowerCase();
+  }
+
+  function getStreamInterfaceOptions(interfaces) {
+    const detected = Array.isArray(interfaces)
+      ? interfaces.map((value) => normalizeInterfaceLabel(value)).filter(Boolean)
+      : [];
+    return Array.from(new Set([...STREAM_INTERFACE_PRESETS, ...detected]));
   }
 
   function isPrimaryAdmin(value) {
@@ -337,6 +385,9 @@ export default function App() {
     setCurrentUser(username || "");
     setCurrentRole(role || "viewer");
     setRequestAccessSent(false);
+    setStreamCapability(defaultStreamCapability);
+    setStreamStatus(defaultStreamStatus);
+    setStreamCapabilityNotice("");
   }
 
   function logout() {
@@ -357,6 +408,15 @@ export default function App() {
     setTestInputError("");
     setRequestAccessSent(false);
     setHasUploadedTestFile(false);
+    setStreamConfig({
+      interface: "Wi-Fi",
+      output_path: LIVE_STREAM_OUTPUT_PATH,
+      interval_seconds: 2,
+    });
+    setStreamInterfaceChoice("Wi-Fi");
+    setStreamCapability(defaultStreamCapability);
+    setStreamStatus(defaultStreamStatus);
+    setStreamCapabilityNotice("");
     setActiveTab("overview");
   }
 
@@ -582,10 +642,6 @@ export default function App() {
       setError("Login required");
       return;
     }
-    if (!isAdmin) {
-      setError("Only admins can download test files.");
-      return;
-    }
 
     setError("");
     setLoading(true);
@@ -641,9 +697,29 @@ export default function App() {
       }
       const payload = await res.json();
       setStreamCapability(payload);
+      const options = getStreamInterfaceOptions(payload.interfaces);
+      const defaultInterface = options[0] || "Wi-Fi";
 
-      if (payload.ok && Array.isArray(payload.interfaces) && payload.interfaces.length && !streamConfig.interface) {
-        setStreamConfig((prev) => ({ ...prev, interface: payload.interfaces[0] }));
+      setStreamConfig((prev) => {
+        const nextInterface = options.includes(prev.interface) ? prev.interface : defaultInterface;
+        return {
+          ...prev,
+          interface: nextInterface,
+          output_path: LIVE_STREAM_OUTPUT_PATH,
+        };
+      });
+
+      setStreamInterfaceChoice((prev) => {
+        if (prev === "other") {
+          return prev;
+        }
+        return options.includes(prev) ? prev : defaultInterface;
+      });
+
+      if (payload.ok) {
+        setStreamCapabilityNotice("Live capture is available on this device.");
+      } else {
+        setStreamCapabilityNotice("");
       }
     } catch (_error) {}
   }
@@ -702,8 +778,17 @@ export default function App() {
       if (!res.ok) {
         throw new Error(payload.error || "Failed to stop live stream");
       }
-      showDashboardToast("Stop requested for live stream.");
+      if (payload.report_saved) {
+        showDashboardToast("Live stream stopped. Session report saved.");
+        setReportCategory("stream");
+        setActiveTab("report");
+      } else if (payload.requested) {
+        throw new Error(payload.error || "Live stream stopped, but the session report was not saved.");
+      } else {
+        showDashboardToast("No active live stream was running.");
+      }
       await fetchStreamStatus();
+      await refreshHistory();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -771,14 +856,27 @@ export default function App() {
   const REPORTS_PER_PAGE = 10;
   const [reportPage, setReportPage] = useState(1);
 
+  const filteredReportHistory = useMemo(() => {
+    return history.filter((entry) => {
+      const runType = String(entry.run_type || "").toLowerCase();
+      if (isViewer) {
+        return runType !== "stream";
+      }
+      if (reportCategory === "stream") {
+        return runType === "stream";
+      }
+      return runType !== "stream";
+    });
+  }, [history, reportCategory, isViewer]);
+
   const pagedHistory = useMemo(() => {
     const start = (reportPage - 1) * REPORTS_PER_PAGE;
-    return history.slice(start, start + REPORTS_PER_PAGE);
-  }, [history, reportPage]);
+    return filteredReportHistory.slice(start, start + REPORTS_PER_PAGE);
+  }, [filteredReportHistory, reportPage]);
 
   const reportTotalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(history.length / REPORTS_PER_PAGE));
-  }, [history.length]);
+    return Math.max(1, Math.ceil(filteredReportHistory.length / REPORTS_PER_PAGE));
+  }, [filteredReportHistory.length]);
 
   const reportStartIndex = (reportPage - 1) * REPORTS_PER_PAGE;
 
@@ -787,6 +885,10 @@ export default function App() {
       setReportPage(reportTotalPages);
     }
   }, [reportPage, reportTotalPages]);
+
+  useEffect(() => {
+    setReportPage(1);
+  }, [reportCategory]);
 
   async function fetchUsers() {
     if (!token || !isAdmin) {
@@ -1228,6 +1330,7 @@ export default function App() {
           history={history}
           setError={setError}
           showDashboardToast={showDashboardToast}
+          onDownloadSamplePcap={downloadSamplePcap}
         />
       )}
 
@@ -1299,7 +1402,8 @@ export default function App() {
             <input value={normalizePathDisplay(job.input_file)} readOnly />
 
             <label>Output PCAP path</label>
-            <input value={job.output_file} onChange={(e) => setJob((p) => ({ ...p, output_file: e.target.value }))} />
+            <input value={safeFileLabel(job.output_file)} readOnly />
+            <p className="field-note">This output location is fixed to keep DPI test exports consistent.</p>
 
             <button className="primary" disabled={loading} onClick={runProcess}>{loading ? "Running..." : "Run DPI"}</button>
 
@@ -1334,19 +1438,44 @@ export default function App() {
               </div>
             )}
 
+            {streamCapability.ok && streamCapabilityNotice && !streamStatus.running && !streamStatus.started_at && (
+              <div className="stream-success">
+                <b>Live capture is ready on this device.</b>
+                <p>{streamCapabilityNotice}</p>
+              </div>
+            )}
+
             <label>Interface Name</label>
-            <input
-              value={streamConfig.interface}
-              onChange={(e) => setStreamConfig((p) => ({ ...p, interface: e.target.value }))}
-              placeholder="Wi-Fi or Ethernet"
-            />
+            <select
+              value={streamInterfaceChoice}
+              onChange={(e) => {
+                const nextChoice = e.target.value;
+                setStreamInterfaceChoice(nextChoice);
+                if (nextChoice !== "other") {
+                  setStreamConfig((p) => ({ ...p, interface: nextChoice }));
+                }
+              }}
+            >
+              {getStreamInterfaceOptions(streamCapability.interfaces).map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+              <option value="other">Other</option>
+            </select>
+
+            {streamInterfaceChoice === "other" && (
+              <>
+                <label>Custom Interface Name</label>
+                <input
+                  value={streamConfig.interface}
+                  onChange={(e) => setStreamConfig((p) => ({ ...p, interface: e.target.value }))}
+                  placeholder="Enter interface name"
+                />
+              </>
+            )}
 
             <label>Rolling Output PCAP</label>
-            <input
-              value={streamConfig.output_path}
-              onChange={(e) => setStreamConfig((p) => ({ ...p, output_path: e.target.value }))}
-              placeholder="live_stream.pcap"
-            />
+            <input value={safeFileLabel(streamConfig.output_path)} readOnly />
+            <p className="field-note">Live capture writes to a fixed rolling file for a simpler workflow.</p>
 
             <label>Status Update Interval (seconds)</label>
             <input
@@ -1393,9 +1522,29 @@ export default function App() {
       {activeTab === "report" && (
         <section className="panel">
           <h2>Run Report Section</h2>
-          <p className="hint">Inspect historical runs and download run-level PDF reports.</p>
+          <p className="hint">
+            {isAdmin
+              ? "Inspect historical runs and switch between DPI test reports and live stream session reports."
+              : "Inspect your DPI report history and download run-level PDF reports."}
+          </p>
+          {isAdmin && (
+            <div className="report-filter-tabs">
+              <button
+                className={`report-filter-tab ${reportCategory === "dpi" ? "active" : ""}`}
+                onClick={() => setReportCategory("dpi")}
+              >
+                DPI Reports
+              </button>
+              <button
+                className={`report-filter-tab ${reportCategory === "stream" ? "active" : ""}`}
+                onClick={() => setReportCategory("stream")}
+              >
+                Live Stream Reports
+              </button>
+            </div>
+          )}
           <div className="report-actions">
-            <button onClick={exportLatestReport} disabled={!result}>Export Latest Snapshot (PDF)</button>
+            <button onClick={exportLatestReport} disabled={!result || (isAdmin && reportCategory !== "dpi")}>Export Latest Snapshot (PDF)</button>
           </div>
 
           <div className="table-wrap report-table-wrap">
@@ -1416,9 +1565,11 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {history.length === 0 && (
+                {filteredReportHistory.length === 0 && (
                   <tr>
-                    <td colSpan={isAdmin ? 11 : 10}>No runs yet.</td>
+                    <td colSpan={isAdmin ? 11 : 10}>
+                      {reportCategory === "stream" ? "No live stream sessions saved yet." : "No DPI reports yet."}
+                    </td>
                   </tr>
                 )}
                 {pagedHistory.map((entry, index) => {
@@ -1431,7 +1582,7 @@ export default function App() {
                       {isAdmin && <td>{entry.user_id || "-"}</td>}
                       <td>{new Date(entry.timestamp).toLocaleString()}</td>
                       <td>{entry.run_type || "full"}</td>
-                      <td>{safeFileLabel(entry.input_file)}</td>
+                      <td>{String(entry.run_type || "").toLowerCase() === "stream" ? entry.input_file : safeFileLabel(entry.input_file)}</td>
                       <td>{safeFileLabel(entry.output_file)}</td>
                       <td>{total}</td>
                       <td>{Number(entry.forwarded ?? entry.forwarded_packets ?? 0)}</td>
@@ -1447,7 +1598,7 @@ export default function App() {
             </table>
           </div>
 
-          {history.length > REPORTS_PER_PAGE && (
+          {filteredReportHistory.length > REPORTS_PER_PAGE && (
             <div className="report-pagination">
               <button disabled={reportPage <= 1} onClick={() => setReportPage((p) => Math.max(1, p - 1))}>Previous</button>
               <span>Page {reportPage} of {reportTotalPages}</span>
@@ -1610,18 +1761,32 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
       <section className={`wp-intro-page ${introTransitioning ? "wp-intro-exit" : ""}`} aria-label="Welcome intro">
         <div className="wp-intro-vignette" aria-hidden="true" />
         <div className="wp-intro-glow" aria-hidden="true" />
+        <div className="wp-intro-orbit wp-intro-orbit-a" aria-hidden="true" />
+        <div className="wp-intro-orbit wp-intro-orbit-b" aria-hidden="true" />
 
         <div className="wp-intro-copy">
-          <h1>DPI Platform</h1>
+          <div className="wp-intro-kicker">Packet Intelligence Platform</div>
+          <h1>
+            <span>DPI</span>
+            <span>Platform</span>
+          </h1>
           <p>
             Real-time packet analytics,
             <br />
             threat insight, and DPI control in one place.
           </p>
+          <div className="wp-intro-pills" aria-label="Platform highlights">
+            <span>Live traffic visibility</span>
+            <span>Policy-ready workflows</span>
+            <span>Shareable reports</span>
+          </div>
         </div>
 
         <button className="wp-intro-cta" onClick={startIntroTransition} disabled={introTransitioning}>
-          Get started
+          <span>Get started</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" aria-hidden="true">
+            <path d="M5 12h14M12 5l7 7-7 7" />
+          </svg>
         </button>
       </section>
     );
@@ -1865,10 +2030,30 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
 }
 
 
-function MyAnalysisTab({ token, onAnalysisResult, onRefreshHistory, onDownloadPdf, history, setError, showDashboardToast }) {
+function MyAnalysisTab({ token, onAnalysisResult, onRefreshHistory, onDownloadPdf, history, setError, showDashboardToast, onDownloadSamplePcap }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [historyPage, setHistoryPage] = useState(1);
+
+  const analysisHistory = useMemo(() => {
+    return history.filter((run) => String(run.run_type || "").toLowerCase() !== "stream");
+  }, [history]);
+
+  const analysisHistoryTotalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(analysisHistory.length / ANALYSIS_HISTORY_PER_PAGE));
+  }, [analysisHistory.length]);
+
+  const pagedAnalysisHistory = useMemo(() => {
+    const start = (historyPage - 1) * ANALYSIS_HISTORY_PER_PAGE;
+    return analysisHistory.slice(start, start + ANALYSIS_HISTORY_PER_PAGE);
+  }, [analysisHistory, historyPage]);
+
+  useEffect(() => {
+    if (historyPage > analysisHistoryTotalPages) {
+      setHistoryPage(analysisHistoryTotalPages);
+    }
+  }, [historyPage, analysisHistoryTotalPages]);
 
   async function handleAnalyze() {
     if (!file) {
@@ -1914,6 +2099,11 @@ function MyAnalysisTab({ token, onAnalysisResult, onRefreshHistory, onDownloadPd
       <section className="panel">
         <h2>My Analysis</h2>
         <p className="hint">Upload your .pcap file for read-only DPI analysis. No blocking rules are applied.</p>
+
+        <div className="sample-help">
+          <p>Need a file to try? Download a sample .pcap and inspect it here.</p>
+          <button onClick={onDownloadSamplePcap} disabled={loading}>Download sample .pcap</button>
+        </div>
 
         <div
           className={`upload-dropzone ${file ? "selected" : ""}`}
@@ -2003,12 +2193,12 @@ function MyAnalysisTab({ token, onAnalysisResult, onRefreshHistory, onDownloadPd
               </tr>
             </thead>
             <tbody>
-              {history.length === 0 && (
+              {analysisHistory.length === 0 && (
                 <tr>
                   <td colSpan={6}>No uploads yet.</td>
                 </tr>
               )}
-              {history.map((run) => {
+              {pagedAnalysisHistory.map((run) => {
                 const total = Number(run.total_packets ?? 0);
                 const dropped = Number(run.dropped ?? run.dropped_packets ?? 0);
                 const dropRate = total ? (dropped / total) * 100 : Number(run.drop_rate || 0);
@@ -2028,6 +2218,14 @@ function MyAnalysisTab({ token, onAnalysisResult, onRefreshHistory, onDownloadPd
             </tbody>
           </table>
         </div>
+
+        {analysisHistory.length > ANALYSIS_HISTORY_PER_PAGE && (
+          <div className="report-pagination">
+            <button disabled={historyPage <= 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}>Previous</button>
+            <span>Page {historyPage} of {analysisHistoryTotalPages}</span>
+            <button disabled={historyPage >= analysisHistoryTotalPages} onClick={() => setHistoryPage((page) => Math.min(analysisHistoryTotalPages, page + 1))}>Next</button>
+          </div>
+        )}
       </section>
     </section>
   );

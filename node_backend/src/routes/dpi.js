@@ -57,9 +57,12 @@ const liveStreamState = {
   started_at: null,
   stopped_at: null,
   pid: null,
+  user_id: null,
   interface: null,
   output_file: null,
   last_error: null,
+  session_saved: false,
+  saved_run: null,
   stats: {
     uptime_seconds: 0,
     total_packets: 0,
@@ -313,6 +316,8 @@ function startLiveStreamWorker({ interfaceName, outputPath, rules, intervalSecon
   liveStreamState.interface = interfaceName;
   liveStreamState.output_file = outputPath;
   liveStreamState.last_error = null;
+  liveStreamState.session_saved = false;
+  liveStreamState.saved_run = null;
   liveStreamState.process = proc;
   liveStreamState.stdoutBuffer = "";
   liveStreamState.ticks = [];
@@ -342,12 +347,45 @@ function startLiveStreamWorker({ interfaceName, outputPath, rules, intervalSecon
     }
   });
 
-  proc.on("close", () => {
+  proc.on("close", async () => {
     liveStreamState.running = false;
     liveStreamState.stopped_at = new Date().toISOString();
     liveStreamState.process = null;
     liveStreamState.pid = null;
+
+    await persistLiveStreamRun();
   });
+}
+
+async function persistLiveStreamRun() {
+  if (liveStreamState.session_saved) {
+    return liveStreamState.saved_run;
+  }
+
+  if (!liveStreamState.started_at) {
+    return null;
+  }
+
+  try {
+    const savedRun = await addRun({
+      user_id: liveStreamState.user_id || "public",
+      input_file: liveStreamState.interface || "live-stream",
+      output_file: liveStreamState.output_file || "live_stream.pcap",
+      total_packets: liveStreamState.stats?.total_packets || 0,
+      forwarded: liveStreamState.stats?.forwarded_packets || 0,
+      dropped: liveStreamState.stats?.dropped_packets || 0,
+      drop_rate: Number((liveStreamState.stats?.drop_rate || 0) * 100),
+      top_apps: liveStreamState.stats?.app_counts || {},
+      block_reasons: liveStreamState.stats?.block_reasons || {},
+      run_type: "stream",
+    });
+    liveStreamState.session_saved = true;
+    liveStreamState.saved_run = savedRun || null;
+    return liveStreamState.saved_run;
+  } catch (error) {
+    liveStreamState.last_error = String(error.message || error);
+    return null;
+  }
 }
 
 function checkLiveCaptureCapability() {
@@ -423,6 +461,28 @@ function stopLiveStreamWorker() {
   }
 
   return true;
+}
+
+function waitForLiveStreamStop(timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+
+    function check() {
+      if (!liveStreamState.running && liveStreamState.session_saved) {
+        resolve(true);
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+
+      setTimeout(check, 150);
+    }
+
+    check();
+  });
 }
 
 router.post("/upload", authMiddleware, requireAdmin, singlePcapUpload("file"), (req, res) => {
@@ -551,12 +611,17 @@ router.get("/report/pdf/:runId", authMiddleware, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
     }
 
+    const isStreamRun = String(run.run_type || "").toLowerCase() === "stream";
     const doc = new PDFDocument({ margin: 50 });
+    const reportFilename = isStreamRun ? `Live_Stream_Report_${run.id}.pdf` : `DPI_Report_${run.id}.pdf`;
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=DPI_Report_${run.id}.pdf`);
+    res.setHeader("Content-Disposition", `attachment; filename=${reportFilename}`);
     doc.pipe(res);
 
-    doc.fontSize(24).font("Helvetica-Bold").text("DPI Analysis Report", { align: "center" });
+    doc
+      .fontSize(24)
+      .font("Helvetica-Bold")
+      .text(isStreamRun ? "Live Stream Session Report" : "DPI Analysis Report", { align: "center" });
     doc.moveDown();
     doc.fontSize(12).font("Helvetica").text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
     doc.text(`User: ${run.user_id || "-"}`, { align: "center" });
@@ -569,9 +634,10 @@ router.get("/report/pdf/:runId", authMiddleware, async (req, res) => {
     doc.moveDown(0.5);
 
     const stats = [
-      ["Input File", path.basename(String(run.input_file || "-"))],
+      [isStreamRun ? "Interface" : "Input File", path.basename(String(run.input_file || "-"))],
       ["Timestamp", run.timestamp ? new Date(run.timestamp).toLocaleString() : "-"],
       ["Run Type", run.run_type || "full"],
+      ...(isStreamRun ? [["Output File", path.basename(String(run.output_file || "-"))]] : []),
       ["Total Packets", run.total_packets ?? 0],
       ["Forwarded", run.forwarded ?? 0],
       ["Dropped", run.dropped ?? 0],
@@ -750,6 +816,7 @@ router.post("/stream/start", authMiddleware, requireAdmin, async (req, res) => {
       : emptyRules;
 
     const rules = req.body.rules || normalizedRules;
+    liveStreamState.user_id = username;
     startLiveStreamWorker({ interfaceName, outputPath, rules, intervalSeconds });
 
     return res.json({
@@ -769,12 +836,20 @@ router.get("/stream/capabilities", authMiddleware, requireAdmin, async (req, res
   return res.json(capability);
 });
 
-router.post("/stream/stop", authMiddleware, requireAdmin, (req, res) => {
+router.post("/stream/stop", authMiddleware, requireAdmin, async (req, res) => {
   const stopped = stopLiveStreamWorker();
+  let savedRun = null;
+  if (stopped) {
+    await waitForLiveStreamStop();
+    savedRun = await persistLiveStreamRun();
+  }
   return res.json({
     ok: true,
     requested: stopped,
     running: liveStreamState.running,
+    report_saved: Boolean(savedRun),
+    report: savedRun,
+    error: !savedRun && stopped ? liveStreamState.last_error || "Live stream report was not saved" : null,
   });
 });
 
@@ -784,6 +859,7 @@ router.get("/stream/status", authMiddleware, requireAdmin, (req, res) => {
     started_at: liveStreamState.started_at,
     stopped_at: liveStreamState.stopped_at,
     pid: liveStreamState.pid,
+    user_id: liveStreamState.user_id,
     interface: liveStreamState.interface,
     output_file: liveStreamState.output_file,
     last_error: liveStreamState.last_error,

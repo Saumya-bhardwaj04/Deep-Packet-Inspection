@@ -106,6 +106,7 @@ async function addRun(run) {
   if (error) {
     throw error;
   }
+  return { ...run };
 }
 
 async function getRuns(userId, limit = 20) {

@@ -97,13 +97,15 @@ export default function App() {
   const [apps, setApps] = useState([]);
   const [rules, setRules] = useState(emptyRules);
   const [ruleForm, setRuleForm] = useState({ ip: "", domain: "", port: "", app: "YouTube" });
-  const [job, setJob] = useState({ input_file: "test_dpi.pcap", output_file: "output_python.pcap" });
+  const [job, setJob] = useState({ input_file: "", output_file: "output_python.pcap" });
+  const [hasUploadedTestFile, setHasUploadedTestFile] = useState(false);
 
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [streamLoading, setStreamLoading] = useState(false);
   const [error, setError] = useState("");
+  const [testInputError, setTestInputError] = useState("");
   const [authError, setAuthError] = useState({ text: "", mode: null });
   const [authNotice, setAuthNotice] = useState({ text: "", mode: null });
   const [dashboardToast, setDashboardToast] = useState("");
@@ -114,8 +116,8 @@ export default function App() {
   const [requestAccessSent, setRequestAccessSent] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [streamConfig, setStreamConfig] = useState({
-    interface: "Ethernet",
-    output_path: "node_backend/outputs/live_stream.pcap",
+    interface: "Wi-Fi",
+    output_path: "live_stream.pcap",
     interval_seconds: 2,
   });
   const [streamStatus, setStreamStatus] = useState({
@@ -352,7 +354,9 @@ export default function App() {
     setAuthError({ text: "", mode: null });
     setAuthNotice({ text: "", mode: null });
     setDashboardToast("");
+    setTestInputError("");
     setRequestAccessSent(false);
+    setHasUploadedTestFile(false);
     setActiveTab("overview");
   }
 
@@ -482,6 +486,12 @@ export default function App() {
       return;
     }
 
+    if (!hasUploadedTestFile || !String(job.input_file || "").trim()) {
+      setTestInputError("Upload a .pcap file before running DPI test.");
+      return;
+    }
+
+    setTestInputError("");
     setError("");
     setLoading(true);
     setResult(null);
@@ -536,6 +546,7 @@ export default function App() {
       return;
     }
 
+    setTestInputError("");
     setError("");
     setLoading(true);
 
@@ -557,6 +568,7 @@ export default function App() {
         ...prev,
         input_file: payload.filepath || prev.input_file,
       }));
+      setHasUploadedTestFile(true);
       showDashboardToast(`Uploaded ${safeFileLabel(payload.filename || file.name)} for DPI testing.`);
     } catch (e) {
       setError(e.message);
@@ -755,6 +767,26 @@ export default function App() {
       .slice(0, 6)
       .map(([name, count]) => ({ name, count: Number(count || 0) }));
   }, [streamStatus]);
+
+  const REPORTS_PER_PAGE = 10;
+  const [reportPage, setReportPage] = useState(1);
+
+  const pagedHistory = useMemo(() => {
+    const start = (reportPage - 1) * REPORTS_PER_PAGE;
+    return history.slice(start, start + REPORTS_PER_PAGE);
+  }, [history, reportPage]);
+
+  const reportTotalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(history.length / REPORTS_PER_PAGE));
+  }, [history.length]);
+
+  const reportStartIndex = (reportPage - 1) * REPORTS_PER_PAGE;
+
+  useEffect(() => {
+    if (reportPage > reportTotalPages) {
+      setReportPage(reportTotalPages);
+    }
+  }, [reportPage, reportTotalPages]);
 
   async function fetchUsers() {
     if (!token || !isAdmin) {
@@ -1252,11 +1284,19 @@ export default function App() {
             <input
               type="file"
               accept=".pcap"
-              onChange={(e) => uploadAdminPcap(e.target.files?.[0] || null)}
+              className={testInputError ? "input-error" : ""}
+              onChange={(e) => {
+                const selectedFile = e.target.files?.[0] || null;
+                if (!selectedFile) {
+                  return;
+                }
+                uploadAdminPcap(selectedFile);
+              }}
             />
+            {testInputError && <p className="field-error">{testInputError}</p>}
 
-            <label>Input PCAP path</label>
-            <input value={job.input_file} onChange={(e) => setJob((p) => ({ ...p, input_file: e.target.value }))} />
+            <label>Input PCAP file</label>
+            <input value={normalizePathDisplay(job.input_file)} readOnly />
 
             <label>Output PCAP path</label>
             <input value={job.output_file} onChange={(e) => setJob((p) => ({ ...p, output_file: e.target.value }))} />
@@ -1294,24 +1334,18 @@ export default function App() {
               </div>
             )}
 
-            {streamCapability.ok && Array.isArray(streamCapability.interfaces) && streamCapability.interfaces.length > 0 && (
-              <div className="stream-hint">
-                Detected interfaces: {streamCapability.interfaces.slice(0, 4).join(", ")}
-              </div>
-            )}
-
             <label>Interface Name</label>
             <input
               value={streamConfig.interface}
               onChange={(e) => setStreamConfig((p) => ({ ...p, interface: e.target.value }))}
-              placeholder="Ethernet"
+              placeholder="Wi-Fi or Ethernet"
             />
 
             <label>Rolling Output PCAP</label>
             <input
               value={streamConfig.output_path}
               onChange={(e) => setStreamConfig((p) => ({ ...p, output_path: e.target.value }))}
-              placeholder="node_backend/outputs/live_stream.pcap"
+              placeholder="live_stream.pcap"
             />
 
             <label>Status Update Interval (seconds)</label>
@@ -1331,7 +1365,7 @@ export default function App() {
             <div className="stream-meta">
               <p><b>Running:</b> {streamStatus.running ? "Yes" : "No"}</p>
               <p><b>Interface:</b> {streamStatus.interface || "-"}</p>
-              <p><b>Output:</b> {streamStatus.output_file || "-"}</p>
+              <p><b>Output:</b> {safeFileLabel(streamStatus.output_file)}</p>
               <p><b>Started:</b> {streamStatus.started_at ? new Date(streamStatus.started_at).toLocaleString() : "-"}</p>
               {streamStatus.last_error && <p className="stream-error"><b>Last Error:</b> {streamStatus.last_error}</p>}
             </div>
@@ -1350,6 +1384,7 @@ export default function App() {
             <SparkChart points={streamPoints} />
 
             <h3>Top Apps In Stream</h3>
+            <p className="hint">Encrypted traffic may appear as HTTPS unless app/domain metadata is detectable.</p>
             <BarChart rows={streamTopApps} />
           </section>
         </section>
@@ -1363,10 +1398,11 @@ export default function App() {
             <button onClick={exportLatestReport} disabled={!result}>Export Latest Snapshot (PDF)</button>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap report-table-wrap">
             <table className="report-table">
               <thead>
                 <tr>
+                  <th>S.No</th>
                   {isAdmin && <th>User</th>}
                   <th>Timestamp</th>
                   <th>Run Type</th>
@@ -1382,15 +1418,16 @@ export default function App() {
               <tbody>
                 {history.length === 0 && (
                   <tr>
-                    <td colSpan={isAdmin ? 10 : 9}>No runs yet.</td>
+                    <td colSpan={isAdmin ? 11 : 10}>No runs yet.</td>
                   </tr>
                 )}
-                {history.map((entry) => {
+                {pagedHistory.map((entry, index) => {
                   const total = Number(entry.total_packets ?? 0);
                   const dropped = Number(entry.dropped ?? entry.dropped_packets ?? 0);
                   const dropRate = total ? (dropped / total) * 100 : 0;
                   return (
                     <tr key={entry.id}>
+                      <td>{reportStartIndex + index + 1}</td>
                       {isAdmin && <td>{entry.user_id || "-"}</td>}
                       <td>{new Date(entry.timestamp).toLocaleString()}</td>
                       <td>{entry.run_type || "full"}</td>
@@ -1409,6 +1446,14 @@ export default function App() {
               </tbody>
             </table>
           </div>
+
+          {history.length > REPORTS_PER_PAGE && (
+            <div className="report-pagination">
+              <button disabled={reportPage <= 1} onClick={() => setReportPage((p) => Math.max(1, p - 1))}>Previous</button>
+              <span>Page {reportPage} of {reportTotalPages}</span>
+              <button disabled={reportPage >= reportTotalPages} onClick={() => setReportPage((p) => Math.min(reportTotalPages, p + 1))}>Next</button>
+            </div>
+          )}
         </section>
       )}
 
@@ -2089,4 +2134,27 @@ function DonutChart({ rows, total, isAdmin, onGoTesting }) {
       </div>
     </div>
   );
+}
+
+function normalizePathDisplay(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "-";
+  }
+
+  const normalized = raw.replace(/\\/g, "/");
+  const filename = safeFileLabel(normalized);
+
+  const segments = normalized.split("/").filter(Boolean);
+  const uploadsIndex = segments.lastIndexOf("uploads");
+  if (uploadsIndex >= 0 && segments[uploadsIndex + 1]) {
+    return `uploads/${segments[uploadsIndex + 1]}`;
+  }
+
+  const outputsIndex = segments.lastIndexOf("outputs");
+  if (outputsIndex >= 0 && segments[outputsIndex + 1]) {
+    return `outputs/${segments[outputsIndex + 1]}`;
+  }
+
+  return filename;
 }

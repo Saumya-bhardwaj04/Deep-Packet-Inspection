@@ -12,12 +12,16 @@ const {
   listPendingAccessRequests,
   getAccessRequestById,
   updateAccessRequestStatus,
+  resolvePendingAccessRequestsForUser,
 } = require("../config/store");
 
 const router = express.Router();
 const jwtSecret =
   process.env.JWT_SECRET ||
   (process.env.NODE_ENV !== "production" ? "dev-only-secret-change-me" : null);
+const PRIMARY_ADMIN_USERNAME = String(process.env.PRIMARY_ADMIN_USERNAME || "samisharma000@gmail.com")
+  .trim()
+  .toLowerCase();
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -30,6 +34,17 @@ function isStrongPassword(value) {
     /\d/.test(password) &&
     /[^A-Za-z0-9]/.test(password)
   );
+}
+
+function normalizeIdentity(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function ensurePrimaryAdminActor(actor) {
+  if (normalizeIdentity(actor) !== PRIMARY_ADMIN_USERNAME) {
+    return false;
+  }
+  return true;
 }
 
 router.post("/register", async (req, res) => {
@@ -113,6 +128,9 @@ router.get("/access-requests", authMiddleware, requireAdmin, async (req, res) =>
 router.patch("/access-requests/:id/approve", authMiddleware, requireAdmin, async (req, res) => {
   const requestId = String(req.params.id || "").trim();
   const reviewer = String(req.user?.username || "").trim();
+  if (!ensurePrimaryAdminActor(reviewer)) {
+    return res.status(403).json({ error: "Only primary admin can approve access requests" });
+  }
   if (!requestId) {
     return res.status(400).json({ error: "Request id is required" });
   }
@@ -133,6 +151,7 @@ router.patch("/access-requests/:id/approve", authMiddleware, requireAdmin, async
 
     await updateUserRole(request.username, "admin");
     await updateAccessRequestStatus(requestId, "approved", reviewer);
+    await resolvePendingAccessRequestsForUser(request.username, "approved", reviewer);
     return res.json({ message: `${request.username} promoted to admin` });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -142,6 +161,9 @@ router.patch("/access-requests/:id/approve", authMiddleware, requireAdmin, async
 router.patch("/access-requests/:id/reject", authMiddleware, requireAdmin, async (req, res) => {
   const requestId = String(req.params.id || "").trim();
   const reviewer = String(req.user?.username || "").trim();
+  if (!ensurePrimaryAdminActor(reviewer)) {
+    return res.status(403).json({ error: "Only primary admin can reject access requests" });
+  }
   if (!requestId) {
     return res.status(400).json({ error: "Request id is required" });
   }
@@ -156,6 +178,7 @@ router.patch("/access-requests/:id/reject", authMiddleware, requireAdmin, async 
     }
 
     await updateAccessRequestStatus(requestId, "rejected", reviewer);
+    await resolvePendingAccessRequestsForUser(request.username, "rejected", reviewer);
     return res.json({ message: `${request.username} request rejected` });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -164,6 +187,10 @@ router.patch("/access-requests/:id/reject", authMiddleware, requireAdmin, async 
 
 router.patch("/promote/:username", authMiddleware, requireAdmin, async (req, res) => {
   const username = String(req.params.username || "").trim();
+  const actor = String(req.user?.username || "").trim();
+  if (!ensurePrimaryAdminActor(actor)) {
+    return res.status(403).json({ error: "Only primary admin can promote users" });
+  }
   if (!username) {
     return res.status(400).json({ error: "Username is required" });
   }
@@ -178,6 +205,7 @@ router.patch("/promote/:username", authMiddleware, requireAdmin, async (req, res
     }
 
     await updateUserRole(username, "admin");
+    await resolvePendingAccessRequestsForUser(username, "approved", actor);
     return res.json({ message: `${username} promoted to admin` });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -187,12 +215,21 @@ router.patch("/promote/:username", authMiddleware, requireAdmin, async (req, res
 router.patch("/demote/:username", authMiddleware, requireAdmin, async (req, res) => {
   const username = String(req.params.username || "").trim();
   const actor = String(req.user?.username || "").trim();
+  if (!ensurePrimaryAdminActor(actor)) {
+    return res.status(403).json({ error: "Only primary admin can demote users" });
+  }
+  const usernameNorm = username.toLowerCase();
+  const actorNorm = actor.toLowerCase();
   if (!username) {
     return res.status(400).json({ error: "Username is required" });
   }
 
-  if (username === actor) {
+  if (usernameNorm === actorNorm) {
     return res.status(400).json({ error: "You cannot demote yourself" });
+  }
+
+  if (usernameNorm === PRIMARY_ADMIN_USERNAME && actorNorm !== PRIMARY_ADMIN_USERNAME) {
+    return res.status(403).json({ error: "Primary admin cannot be demoted" });
   }
 
   try {
@@ -205,6 +242,7 @@ router.patch("/demote/:username", authMiddleware, requireAdmin, async (req, res)
     }
 
     await updateUserRole(username, "viewer");
+    await resolvePendingAccessRequestsForUser(username, "rejected", actor);
     return res.json({ message: `${username} demoted to viewer` });
   } catch (error) {
     return res.status(500).json({ error: error.message });

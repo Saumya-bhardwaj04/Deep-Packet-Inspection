@@ -1136,6 +1136,15 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
 .report-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .users-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .users-table td .role-badge { display: inline-block; }
+.restricted-action-wrap {
+  display: inline-block;
+  cursor: not-allowed;
+}
+
+.restricted-action-btn {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
 .auth-hint { margin: 2px 0 0; }
 
 .stream-actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 12px; }
@@ -1211,32 +1220,6 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
   to { transform: rotate(360deg); }
 }
 
-@keyframes introBookFlip {
-  0% {
-    opacity: 1;
-    transform: perspective(1400px) rotateX(0deg) translateY(0);
-  }
-  65% {
-    opacity: 0.9;
-    transform: perspective(1400px) rotateX(56deg) translateY(24px);
-  }
-  100% {
-    opacity: 0;
-    transform: perspective(1400px) rotateX(88deg) translateY(150px);
-  }
-}
-
-@keyframes welcomeBookFlipIn {
-  0% {
-    opacity: 0;
-    transform: perspective(1400px) rotateX(-78deg) translateY(110px);
-  }
-  100% {
-    opacity: 1;
-    transform: perspective(1400px) rotateX(0deg) translateY(0);
-  }
-}
-
 @keyframes mobileIntroSlideOut {
   0% {
     opacity: 1;
@@ -1267,21 +1250,6 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
   100% {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-@keyframes welcomeFlipMatchFirst {
-  0% {
-    opacity: 0.05;
-    transform: perspective(1600px) rotateX(-88deg);
-  }
-  48% {
-    opacity: 1;
-    transform: perspective(1600px) rotateX(-34deg);
-  }
-  100% {
-    opacity: 1;
-    transform: perspective(1600px) rotateX(0deg);
   }
 }
 

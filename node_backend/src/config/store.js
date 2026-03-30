@@ -229,6 +229,27 @@ async function updateAccessRequestStatus(requestId, status, reviewedBy) {
   return data || null;
 }
 
+async function resolvePendingAccessRequestsForUser(username, status, reviewedBy) {
+  const supabase = getSupabaseClient();
+  const safeUsername = String(username || "").trim();
+  if (!safeUsername) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("access_requests")
+    .update({ status, reviewed_at: nowIso(), reviewed_by: reviewedBy })
+    .eq("username", safeUsername)
+    .eq("status", "pending")
+    .select("id,username,status,requested_at,reviewed_at,reviewed_by");
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
 module.exports = {
   getUserByUsername,
   createUser,
@@ -238,6 +259,7 @@ module.exports = {
   listPendingAccessRequests,
   getAccessRequestById,
   updateAccessRequestStatus,
+  resolvePendingAccessRequestsForUser,
   upsertRules,
   getRules,
   addRun,

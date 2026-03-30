@@ -8,6 +8,7 @@ const TOKEN_KEY = "dpi_token";
 const ROLE_KEY = "dpi_role";
 const USERNAME_KEY = "dpi_username";
 const INTRO_SEEN_KEY = "dpi_intro_seen";
+const PRIMARY_ADMIN_USERNAME = (import.meta.env.VITE_PRIMARY_ADMIN_USERNAME || "samisharma000@gmail.com").trim().toLowerCase();
 
 const emptyRules = {
   blocked_ips: [],
@@ -145,6 +146,7 @@ export default function App() {
 
   const isAdmin = currentRole === "admin";
   const isViewer = currentRole === "viewer";
+  const isCurrentUserPrimaryAdmin = normalizeIdentity(currentUser) === PRIMARY_ADMIN_USERNAME;
 
   const tabs = [
     { key: "overview", label: "Overview", roles: ["admin", "viewer"] },
@@ -192,7 +194,7 @@ export default function App() {
     fetchPendingRequestsCount();
     const id = setInterval(fetchPendingRequestsCount, 10000);
     return () => clearInterval(id);
-  }, [token, isAdmin]);
+  }, [token, isAdmin, users, currentUser]);
 
   useEffect(() => {
     if (!showMobileMenu) {
@@ -208,6 +210,14 @@ export default function App() {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [showMobileMenu]);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+    const id = setTimeout(() => setError(""), 5500);
+    return () => clearTimeout(id);
+  }, [error]);
 
   function authHeaders() {
     const headers = { "Content-Type": "application/json" };
@@ -233,16 +243,30 @@ export default function App() {
     return String(value || "").trim().toLowerCase();
   }
 
+  function isPrimaryAdmin(value) {
+    return normalizeIdentity(value) === PRIMARY_ADMIN_USERNAME;
+  }
+
   function filterPendingRequestsForView(pendingList, usersList = users) {
     const rows = Array.isArray(pendingList) ? pendingList : [];
     const sourceUsers = Array.isArray(usersList) ? usersList : [];
+    const currentIdentity = normalizeIdentity(currentUser);
     const adminUsers = new Set(
       sourceUsers
         .filter((user) => String(user?.role || "").toLowerCase() === "admin")
         .map((user) => normalizeIdentity(user?.username))
     );
 
-    return rows.filter((request) => !adminUsers.has(normalizeIdentity(request?.username)));
+    return rows.filter((request) => {
+      const requestIdentity = normalizeIdentity(request?.username);
+      if (!requestIdentity) {
+        return false;
+      }
+      if (requestIdentity === currentIdentity) {
+        return false;
+      }
+      return !adminUsers.has(requestIdentity);
+    });
   }
 
   async function boot() {
@@ -590,9 +614,7 @@ export default function App() {
       }
       const payload = await res.json();
       setStreamStatus(payload);
-    } catch (_error) {
-      // keep previous stream status if polling fails temporarily
-    }
+    } catch (_error) {}
   }
 
   async function fetchStreamCapability() {
@@ -611,9 +633,7 @@ export default function App() {
       if (payload.ok && Array.isArray(payload.interfaces) && payload.interfaces.length && !streamConfig.interface) {
         setStreamConfig((prev) => ({ ...prev, interface: payload.interfaces[0] }));
       }
-    } catch (_error) {
-      // Keep last known capability state.
-    }
+    } catch (_error) {}
   }
 
   async function startStreaming() {
@@ -778,9 +798,7 @@ export default function App() {
         throw new Error(payload.error || "Failed to load access requests");
       }
       setPendingRequests(filterPendingRequestsForView(payload));
-    } catch (_e) {
-      // Keep last known badge count if transient polling fails.
-    }
+    } catch (_e) {}
   }
 
   async function promoteUser(username) {
@@ -1046,7 +1064,7 @@ export default function App() {
               <span className={`role-badge ${isAdmin ? "admin" : "viewer"}`}>{isAdmin ? "Admin" : "Viewer"}</span>
               {isAdmin && (
                 <span className={`pending-badge ${pendingRequests.length > 0 ? "attention" : ""}`}>
-                  Pending Requests: {pendingRequests.length}
+                  Pending Requests: {isCurrentUserPrimaryAdmin ? pendingRequests.length : "Locked"}
                 </span>
               )}
             </div>
@@ -1107,7 +1125,7 @@ export default function App() {
           <span className={`role-badge ${isAdmin ? "admin" : "viewer"}`}>{isAdmin ? "Admin" : "Viewer"}</span>
           {isAdmin && (
             <span className={`pending-badge ${pendingRequests.length > 0 ? "attention" : ""}`}>
-              Pending Requests: {pendingRequests.length}
+              Pending Requests: {isCurrentUserPrimaryAdmin ? pendingRequests.length : "Locked"}
             </span>
           )}
           <button onClick={logout}>Logout</button>
@@ -1402,7 +1420,7 @@ export default function App() {
           </div>
           <p className="hint">Manage roles, approve access requests, and keep least-privilege controls.</p>
 
-          {pendingRequests.length > 0 && (
+          {pendingRequests.length > 0 && isCurrentUserPrimaryAdmin && (
             <div className="pending-requests-box">
               <h3>Pending Access Requests ({pendingRequests.length})</h3>
               <div className="pending-list">
@@ -1417,6 +1435,10 @@ export default function App() {
                 ))}
               </div>
             </div>
+          )}
+
+          {!isCurrentUserPrimaryAdmin && (
+            <div className="notice-box">Role management is restricted to the primary admin account.</div>
           )}
 
           <div className="table-wrap">
@@ -1443,8 +1465,16 @@ export default function App() {
                     </td>
                     <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : "-"}</td>
                     <td>
-                      {user.username === currentUser ? (
+                      {normalizeIdentity(user.username) === normalizeIdentity(currentUser) ? (
                         <span className="hint">(You)</span>
+                      ) : !isCurrentUserPrimaryAdmin ? (
+                        <span className="restricted-action-wrap" title="Restricted">
+                          <button className="restricted-action-btn" type="button" disabled>
+                            {user.role === "viewer" ? "Promote to Admin" : "Demote to Viewer"}
+                          </button>
+                        </span>
+                      ) : user.role === "admin" && isPrimaryAdmin(user.username) ? (
+                        <span className="hint">(Protected Admin)</span>
                       ) : user.role === "viewer" ? (
                         <button onClick={() => promoteUser(user.username)}>Promote to Admin</button>
                       ) : (
@@ -1568,7 +1598,6 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
       </div>
  
       <div className="wp-stage">
-        {/* LEFT — branding */}
         <div className="wp-brand">
           <div className="wp-eyebrow">
             <span className={`wp-status-dot ${health === "online" ? "dot-online" : "dot-offline"}`} />
@@ -1626,7 +1655,6 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
           </button>
         </div>
  
-        {/* RIGHT — visual panel */}
         <div className="wp-visual" aria-hidden="true" ref={visualPanelRef}>
           <div className="wp-vis-card">
             <div className="wp-vis-header">
@@ -1637,7 +1665,6 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
             </div>
  
             <div className="wp-vis-body">
-              {/* KPIs */}
               <div className="wp-vis-kpi-row">
                 {[
                   { label: "TOTAL",   val: "1,247", cls: "blue"  },
@@ -1651,7 +1678,6 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
                 ))}
               </div>
  
-              {/* Bars */}
               <div className="wp-vis-bars">
                 {[
                   { app: "HTTPS",    pct: 72, count: 898 },
@@ -1670,7 +1696,6 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
                 ))}
               </div>
  
-              {/* Log */}
               <div className="wp-vis-log">
                 {[
                   { t: "11:42:07", msg: "BLOCKED  192.168.1.50 → facebook.com", color: "#d64545" },
@@ -1714,7 +1739,6 @@ function AuthPage({ authMode, switchAuthMode, authForm, setAuthForm, health, loa
         </div>
       </section>
  
-      {/* Auth Modal */}
       {showAuthModal && (
         <div className="wp-modal-overlay" onClick={() => setShowAuthModal(false)}>
           <div className="wp-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>

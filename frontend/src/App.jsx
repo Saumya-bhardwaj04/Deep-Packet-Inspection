@@ -62,7 +62,6 @@ function normalizeInterfaceLabel(value) {
   if (!text) {
     return "";
   }
-
   const lower = text.toLowerCase();
   if (lower.includes("wi-fi") || lower.includes("wifi") || lower.includes("wireless") || lower.includes("wlan")) {
     return "Wi-Fi";
